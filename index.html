@@ -738,7 +738,10 @@ function renderUnits(){
   units.forEach((unit, idx)=>{
     const div = document.createElement("div");
     div.className = "card";
-    const totalQ = unit.sections.reduce((sum, s)=>sum + questionBank[s.id].length, 0);
+    let totalQ = 0;
+    unit.sections.forEach(s => {
+      if(questionBank[s.id]) totalQ += questionBank[s.id].length;
+    });
     div.innerHTML = `<div class="img-area">${unit.icon}</div><h3>${unit.name}</h3><p>${unit.sections.length}框题 · 共${totalQ}题</p>`;
     div.onclick = ()=>showSections(idx);
     listWrap.appendChild(div);
