@@ -47,7 +47,7 @@ button:hover{opacity:0.9;}
     <p>七年级上册 · 24新版人教版<br>选择单元开始挑战，每次随机15题</p>
   </div>
   <div class="wrap unit-grid" id="unitList"></div>
-  <p class="tip">3条生命 · 连击加分 · 防复制已开启</p>
+  <p class="tip">每次10题 · 每题10分 · 答错显示解析 · 防复制已开启</p>
 </div>
 
 <!--框题选择页-->
@@ -66,13 +66,13 @@ button:hover{opacity:0.9;}
 <div id="pageQuiz" class="page">
   <div class="quiz-box">
     <div class="info-bar">
-      <span>题目：<span id="qIndex">1</span>/15</span>
-      <span>生命：<span id="life">❤️❤️❤️</span></span>
-      <span>连击：<span id="combo">0</span></span>
-      <span>得分：<span id="scoreShow">0</span></span>
+      <span>题目：<span id="qIndex">1</span>/10</span>
+      <span>得分：<span id="scoreShow">0</span>/100</span>
     </div>
     <div class="question-title" id="question"></div>
     <div id="optionsWrap"></div>
+    <div id="explainBox" style="display:none;margin-top:20px;padding:15px;background:#f3e8f7;border-radius:12px;font-size:15px;line-height:1.6;color:#333;"></div>
+    <button id="nextBtn" style="display:none;width:100%;margin-top:15px;" onclick="nextQuestion()">下一题 →</button>
   </div>
 </div>
 
@@ -729,7 +729,44 @@ document.addEventListener('copy', e => e.preventDefault());
 
 let currentUnitIdx = 0;
 let currentSectionId = "";
-let now = 0, life = 3, combo = 0, score = 0, questions = [];
+let now = 0, score = 0, questions = [];
+const TOTAL_Q = 10;
+
+// 音效
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playSound(freq, dur){
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + dur);
+  osc.start(); osc.stop(audioCtx.currentTime + dur);
+}
+function playCorrect(){ playSound(880, 0.15); setTimeout(()=>playSound(1320, 0.2), 100); }
+function playWrong(){ playSound(220, 0.3); }
+
+// 语音播报
+let zhVoice = null;
+function loadVoices(){
+  const voices = window.speechSynthesis.getVoices();
+  zhVoice = voices.find(v=>v.name.includes("Xiaoxiao")) || 
+            voices.find(v=>v.name.includes("Xiaoyi")) ||
+            voices.find(v=>v.lang==="zh-CN");
+}
+window.speechSynthesis.onvoiceschanged = loadVoices;
+loadVoices();
+function speakText(text){
+  if(!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "zh-CN";
+  if(zhVoice) u.voice = zhVoice;
+  u.rate = 1.0;
+  u.pitch = 1.3;
+  u.volume = 0.8;
+  window.speechSynthesis.speak(u);
+}
 
 //渲染单元列表（首页）
 function renderUnits(){
@@ -773,8 +810,8 @@ function backToUnit(){
 //开始刷题
 function startQuiz(sectionId){
   currentSectionId = sectionId;
-  questions = shuffle(questionBank[sectionId]).slice(0, 15);
-  now = 0; life = 3; combo = 0; score = 0;
+  questions = shuffle(questionBank[sectionId]).slice(0, TOTAL_Q);
+  now = 0; score = 0;
   renderQuestion();
   switchPage("pageQuiz");
 }
@@ -790,51 +827,73 @@ function shuffle(arr){
 
 function renderQuestion(){
   const q = questions[now];
-  document.getElementById("qIndex").innerText = now+1;
-  document.getElementById("life").innerText = "❤️".repeat(life) + "🤍".repeat(3-life);
-  document.getElementById("combo").innerText = combo;
+  document.getElementById("qIndex").innerText = (now+1) + "/" + TOTAL_Q;
   document.getElementById("scoreShow").innerText = score;
   document.getElementById("question").innerText = (now+1) + ". " + q.q;
+  // 隐藏解析和下一题按钮
+  document.getElementById("explainBox").style.display = "none";
+  document.getElementById("nextBtn").style.display = "none";
   const optWrap = document.getElementById("optionsWrap");
   optWrap.innerHTML = "";
   q.opt.forEach((op, idx)=>{
     const div = document.createElement("div");
     div.className = "option";
     div.innerText = op;
-    div.onclick = ()=>chooseAnswer(div, idx, q.ans);
+    div.onclick = ()=>chooseAnswer(div, idx, q);
     optWrap.appendChild(div);
   });
 }
 
-function chooseAnswer(el, idx, ans){
+function chooseAnswer(el, idx, q){
   const options = document.querySelectorAll(".option");
   const chosen = options[idx].innerText.charAt(0);
-  if(chosen === ans){
-    el.classList.add("right");
-    combo++;
-    score += 10 + combo*2;
-  }else{
+  const ans = q.ans;
+  
+  options.forEach(o=>{
+    if(o.innerText.charAt(0) === ans) o.classList.add("right");
+    o.onclick = null;
+  });
+  
+  if(chosen !== ans){
     el.classList.add("wrong");
-    life--;
-    combo = 0;
-    options.forEach(o=>{ if(o.innerText.charAt(0) === ans) o.classList.add("right"); });
   }
-  options.forEach(o=>o.onclick = null);
-  setTimeout(()=>{
-    if(life<=0){ showResult(); return; }
-    now++;
-    if(now>=questions.length){ showResult(); return; }
-    renderQuestion();
-  }, 800);
+
+  // 显示解析
+  const explainBox = document.getElementById("explainBox");
+  explainBox.style.display = "block";
+  explainBox.innerText = "📖 解析：" + (q.explain || "本题考察本小节核心知识点");
+
+  // 显示下一题按钮
+  document.getElementById("nextBtn").style.display = "block";
+  document.getElementById("nextBtn").innerText = (now >= TOTAL_Q-1) ? "查看结果 →" : "下一题 →";
+
+  if(chosen === ans){
+    score += 10;
+    document.getElementById("scoreShow").innerText = score;
+    playCorrect();
+    speakText("答对了！");
+  }else{
+    playWrong();
+    speakText("答错了！");
+  }
+}
+
+function nextQuestion(){
+  now++;
+  if(now >= TOTAL_Q){ showResult(); return; }
+  renderQuestion();
 }
 
 function showResult(){
   let msg = "";
-  if(life===3 && score>=150) msg = "太棒了！满分通关，道法小达人就是你！🎉";
-  else if(score>=120) msg = "很不错！继续加油，你已经很厉害了！👍";
-  else if(score>=80) msg = "还可以，再复习一下错题吧！💪";
+  if(score === 100){ 
+    msg = "太棒了！满分！本小节知识点全部掌握！🎉";
+    speakText("太棒了！满分！你真是道法小能手！");
+  }
+  else if(score >= 80) msg = "很不错！继续加油，你已经很厉害了！👍";
+  else if(score >= 60) msg = "还可以，再复习一下错题吧！💪";
   else msg = "别灰心，回去再看看课本，下次一定更好！🌱";
-  document.getElementById("resultText").innerHTML = `本次得分：<b style="color:#4caf50;font-size:28px;">${score}</b>分<br>${msg}`;
+  document.getElementById("resultText").innerHTML = `本次得分：<b style="color:#9c27b0;font-size:28px;">${score}</b>分 / 100分<br>${msg}`;
   switchPage("pageResult");
 }
 
